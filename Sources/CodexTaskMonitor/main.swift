@@ -143,6 +143,7 @@ extension TaskStatus {
 
 struct MonitorView: View {
     @ObservedObject var model: MonitorModel
+    var closePanel: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -152,6 +153,8 @@ struct MonitorView: View {
                 Text("\(model.tasks.count) 个").foregroundStyle(.secondary)
                 Button(action: model.refresh) { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless).help("立即刷新")
+                Button(action: closePanel) { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless).help("收起面板").accessibilityLabel("收起面板")
             }.padding(18)
             HStack(spacing: 10) {
                 stat("运行", model.running, .blue)
@@ -237,7 +240,7 @@ struct MonitorView: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var item: NSStatusItem!
-    private let popover = NSPopover()
+    private var panel: TaskPopover!
     private var model: MonitorModel!
     func applicationDidFinishLaunching(_ notification: Notification) {
         if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "local.codex-task-monitor").count > 1 {
@@ -249,8 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.target = self; item.button?.action = #selector(toggle)
         item.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: MonitorView(model: model))
+        panel = TaskPopover(contentViewController: NSHostingController(rootView: MonitorView(model: model, closePanel: { [weak self] in self?.panel.close() })))
         model.onChange = { [weak self] in self?.updateTitle() }
         updateTitle(); model.start()
         if CommandLine.arguments.contains("--show") { toggle() }
@@ -268,11 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         item.button?.toolTip = "Codex：共 \(model.tasks.count) 个任务；蓝：运行 \(model.running)，橙：等你处理 \(model.waiting)，红：失败 \(model.failed)，绿：本轮结束待查看 \(model.ended)，灰：中断或状态待确认 \(model.uncertain)"
     }
     @objc func toggle() {
-        if popover.isShown { popover.performClose(nil) }
-        else if let button = item.button {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        if let button = item.button { panel.toggle(from: button) }
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner])
@@ -301,5 +299,5 @@ if CommandLine.arguments.contains("--snapshot") {
     let delegate = AppDelegate()
     app.delegate = delegate
     app.setActivationPolicy(.accessory)
-    app.run()
+    withExtendedLifetime(delegate) { app.run() }
 }
