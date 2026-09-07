@@ -9,6 +9,7 @@ final class MonitorModel: ObservableObject {
     @Published var refreshedAt: Date?
     @Published var notificationsEnabled = false
     @Published var notificationMessage = ""
+    private let home: URL
     private let store: TaskStore
     private let queue = DispatchQueue(label: "CodexTaskMonitor.reader", qos: .utility)
     private var scanning = false
@@ -20,6 +21,7 @@ final class MonitorModel: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init(home: URL) {
+        self.home = home
         store = TaskStore(home: home)
         let saved = defaults.double(forKey: "monitorSince")
         since = saved > 0 ? Date(timeIntervalSince1970: saved) : Date()
@@ -45,12 +47,20 @@ final class MonitorModel: ObservableObject {
         let cutoff = since
         queue.async {
             let result = Result { try self.store.snapshot(since: cutoff) }
+            let receipts = ReadReceipts.load(home: self.home)
             DispatchQueue.main.async {
                 self.scanning = false
                 guard cutoff == self.since else { self.refresh(); return }
                 switch result {
                 case .success(let all):
                     self.error = nil; self.refreshedAt = Date()
+                    if let receipts {
+                        let readKeys = all.filter { receipts.isRead($0) }.map { $0.key }
+                        if !Set(readKeys).isSubset(of: self.dismissed) {
+                            self.dismissed.formUnion(readKeys)
+                            self.defaults.set(Array(self.dismissed), forKey: "dismissed")
+                        }
+                    }
                     let visible = all.filter { !self.dismissed.contains($0.key) }
                     let changed = self.alerts.update(all, dismissed: self.dismissed)
                     self.tasks = visible
@@ -75,7 +85,12 @@ final class MonitorModel: ObservableObject {
     }
     func open(_ task: TaskRecord) {
         guard let url = URL(string: "codex://threads/\(task.id)") else { return }
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            DispatchQueue.main.async {
+                if error == nil, task.status == .ended { self.dismiss(task) }
+                else if error != nil { self.notificationMessage = "无法打开 Codex，任务仍保留在列表中" }
+            }
+        }
     }
     func enableNotifications() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
@@ -240,7 +255,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         if let id = response.notification.request.content.userInfo["threadID"] as? String,
-           let url = URL(string: "codex://threads/\(id)") { NSWorkspace.shared.open(url) }
+           let url = URL(string: "codex://threads/\(id)") {
+            DispatchQueue.main.async {
+                if let task = self.model.tasks.first(where: { $0.id == id }) { self.model.open(task) }
+                else { NSWorkspace.shared.open(url) }
+            }
+        }
         completionHandler()
     }
 }
