@@ -52,6 +52,8 @@ swift run MonitorCoreChecks
 
 自动检查涵盖生命周期、旧轮结束事件、等待输入、误报防护、超时、中断、工具错误、JSONL 半行/损坏/截断、SQLite 过滤和数据源不可用。使用独立检查程序，兼容没有完整 Xcode/XCTest 的 Command Line Tools 环境。
 
+可选运行 `./scripts/check-sounds.sh` 实测双音播放与取消（会发出短音，需要本机音频会话，不在 CI 中执行）。
+
 `--snapshot` 仅输出状态计数，不输出标题、聊天内容或路径。构建产物在 `dist/`；GitHub Actions 在 PR 和 main 上运行同样检查并保存 app ZIP。构建的是运行架构版本，CI 的下载产物架构取决于 runner。
 
 本地应用为临时签名，未进行 Apple Developer ID 签名或公证。跨机器分发可能遇到 Gatekeeper 限制。不要为此关闭系统安全设置。此工具不需要云端“网站部署”。
