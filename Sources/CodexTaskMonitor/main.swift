@@ -10,9 +10,12 @@ final class MonitorModel: ObservableObject {
     @Published var notificationsEnabled = false
     @Published var notificationMessage = ""
     @Published var soundEnabled = true {
-        didSet { defaults.set(soundEnabled, forKey: "soundEnabled") }
+        didSet {
+            defaults.set(soundEnabled, forKey: "soundEnabled")
+            if !soundEnabled { soundPlayer.stop() }
+        }
     }
-    private let reminderSound = NSSound(named: NSSound.Name("Glass"))
+    private let soundPlayer = ReminderSoundPlayer()
     private let home: URL
     private let store: TaskStore
     private let queue = DispatchQueue(label: "CodexTaskMonitor.reader", qos: .utility)
@@ -106,15 +109,14 @@ final class MonitorModel: ObservableObject {
             }
         }
     }
-    func previewSound() {
-        if let reminderSound {
-            reminderSound.stop()
-            if !reminderSound.play() { notificationMessage = "声音播放失败，请检查音频输出" }
-        } else { NSSound.beep() }
+    func previewSound(_ cue: SoundCue) {
+        soundPlayer.play(cue) { [weak self] in
+            self?.notificationMessage = "声音播放失败，请检查音频输出"
+        }
     }
     private func notify(_ changed: [TaskRecord]) {
         // Local audio works without notification permission; one sound per batch.
-        if soundEnabled { previewSound() }
+        if soundEnabled, let cue = SoundCue.select(for: changed.map { $0.status }) { previewSound(cue) }
         guard notificationsEnabled else { return }
         let content = UNMutableNotificationContent()
         content.title = changed.count == 1 ? changed[0].status.label : "\(changed.count) 个任务有新状态"
@@ -201,7 +203,11 @@ struct MonitorView: View {
                 HStack {
                     Toggle("声音提醒", isOn: $model.soundEnabled).toggleStyle(.switch).controlSize(.mini)
                     Spacer()
-                    Button("试听", action: model.previewSound).buttonStyle(.borderless)
+                    Menu("试听") {
+                        ForEach(SoundCue.allCases, id: \.rawValue) { cue in
+                            Button(cue.label) { model.previewSound(cue) }
+                        }
+                    }.menuStyle(.borderlessButton).fixedSize()
                 }.font(.caption)
                 HStack {
                     Button("查看今天的任务", action: model.includeToday)

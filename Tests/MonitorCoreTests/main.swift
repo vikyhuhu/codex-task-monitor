@@ -153,6 +153,19 @@ final class LifecycleTests {
         XCTAssertEqual(tracker.update(ended, dismissed: Set(ended.map { $0.key })).count, 0)
         tracker.silenceNextUpdate(); XCTAssertEqual(tracker.update(ended).count, 0)
     }
+    func testSoundPriorityAndSilentRunning() {
+        XCTAssertEqual(SoundCue.select(for: []), nil)
+        XCTAssertEqual(SoundCue.select(for: [.running, .running]), nil)
+        XCTAssertEqual(SoundCue.select(for: [.ended, .running]), .ended)
+        XCTAssertEqual(SoundCue.select(for: [.ended, .needsInput]), .needsInput)
+        for exception in [TaskStatus.failed, .interrupted, .uncertain] {
+            let batch: [TaskStatus] = [.ended, .needsInput, exception, .running]
+            XCTAssertEqual(SoundCue.select(for: batch), .exception)
+            XCTAssertEqual(SoundCue.select(for: batch.reversed()), .exception)
+        }
+        XCTAssertEqual(SoundCue.needsInput.repeatCount, 2)
+        XCTAssertEqual(Set(SoundCue.allCases.map { $0.systemSoundName }).count, 3)
+    }
     func testMissingDatabaseThrowsInsteadOfEmptySuccess() {
         XCTAssertThrowsError(try TaskStore(home: URL(fileURLWithPath: "/does-not-exist")).snapshot(since: base))
     }
@@ -173,4 +186,6 @@ suite.testMissingDatabaseThrowsInsteadOfEmptySuccess(); print("CHECK testMissing
 if failures > 0 { exit(1) }
 do { try suite.testNotificationTransitionsDedupDismissalAndRestart(); print("CHECK notification transitions, dedup, dismissal and restart") } catch { failures += 1; print("FAIL notification checks: \(error)") }
 if failures > 0 { exit(1) }
-print("Passed 12 checks")
+suite.testSoundPriorityAndSilentRunning(); print("CHECK sound priority, ordering and silent running")
+if failures > 0 { exit(1) }
+print("Passed 13 checks")
