@@ -121,6 +121,15 @@ final class LifecycleTests {
         sqlite3_exec(db, "INSERT INTO threads VALUES ('task', 'Test', '', '/test', '\(url.path)', 0, 'vscode', \(Int(base.timeIntervalSince1970)))", nil, nil, nil)
         let store = TaskStore(home: root)
         let live = try store.snapshot(since: base, now: base)
+        for status in TaskStatus.allCases {
+            var transition = AlertTracker()
+            XCTAssertEqual(transition.update(live).count, 0)
+            var changed = live[0]; changed.status = status
+            XCTAssertEqual(transition.update([changed]).count, status == .running ? 0 : 1)
+            XCTAssertEqual(transition.update([changed]).count, 0)
+            var fresh = AlertTracker()
+            XCTAssertEqual(fresh.update([changed]).count, 0)
+        }
         let readJSON = Data(#"{"electron-persisted-atom-state":{"unread-thread-ids-by-host-v1":{"local":[]}}}"#.utf8)
         let unreadJSON = Data(#"{"electron-persisted-atom-state":{"unread-thread-ids-by-host-v1":{"local":["task"]}}}"#.utf8)
         let read = ReadReceipts(data: readJSON, modifiedAt: base.addingTimeInterval(20))!

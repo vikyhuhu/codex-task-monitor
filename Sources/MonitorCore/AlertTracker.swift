@@ -10,7 +10,7 @@ public struct AlertTracker {
     public mutating func update(_ records: [TaskRecord], dismissed: Set<String> = []) -> [TaskRecord] {
         let alerts = records.filter {
             baselineEstablished && !dismissed.contains($0.key) && previous[$0.key] != $0.status && !delivered.contains($0.key + ":" + $0.status.rawValue) &&
-                [.ended, .needsInput, .failed, .interrupted].contains($0.status)
+                $0.status != .running
         }
         for record in (baselineEstablished ? alerts : records) {
             delivered.insert(record.key + ":" + record.status.rawValue)

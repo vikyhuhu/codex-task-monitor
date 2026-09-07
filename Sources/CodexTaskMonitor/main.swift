@@ -9,6 +9,10 @@ final class MonitorModel: ObservableObject {
     @Published var refreshedAt: Date?
     @Published var notificationsEnabled = false
     @Published var notificationMessage = ""
+    @Published var soundEnabled = true {
+        didSet { defaults.set(soundEnabled, forKey: "soundEnabled") }
+    }
+    private let reminderSound = NSSound(named: NSSound.Name("Glass"))
     private let home: URL
     private let store: TaskStore
     private let queue = DispatchQueue(label: "CodexTaskMonitor.reader", qos: .utility)
@@ -22,6 +26,7 @@ final class MonitorModel: ObservableObject {
 
     init(home: URL) {
         self.home = home
+        soundEnabled = defaults.object(forKey: "soundEnabled") as? Bool ?? true
         store = TaskStore(home: home)
         let saved = defaults.double(forKey: "monitorSince")
         since = saved > 0 ? Date(timeIntervalSince1970: saved) : Date()
@@ -101,12 +106,20 @@ final class MonitorModel: ObservableObject {
             }
         }
     }
+    func previewSound() {
+        if let reminderSound {
+            reminderSound.stop()
+            if !reminderSound.play() { notificationMessage = "声音播放失败，请检查音频输出" }
+        } else { NSSound.beep() }
+    }
     private func notify(_ changed: [TaskRecord]) {
+        // Local audio works without notification permission; one sound per batch.
+        if soundEnabled { previewSound() }
         guard notificationsEnabled else { return }
         let content = UNMutableNotificationContent()
         content.title = changed.count == 1 ? changed[0].status.label : "\(changed.count) 个任务有新状态"
         content.body = changed.prefix(3).map { String($0.title.prefix(60)) }.joined(separator: "\n")
-        content.sound = .default
+        content.sound = nil // Audio is played above; avoid a second notification sound.
         if let first = changed.first { content.userInfo = ["threadID": first.id] }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)) { error in
             if error != nil { DispatchQueue.main.async { self.notificationMessage = "通知发送失败，请检查系统通知权限" } }
@@ -186,6 +199,11 @@ struct MonitorView: View {
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
+                    Toggle("声音提醒", isOn: $model.soundEnabled).toggleStyle(.switch).controlSize(.mini)
+                    Spacer()
+                    Button("试听", action: model.previewSound).buttonStyle(.borderless)
+                }.font(.caption)
+                HStack {
                     Button("查看今天的任务", action: model.includeToday)
                     Spacer()
                     Button("清除已结束", action: model.clearEnded).disabled(model.ended == 0)
@@ -251,7 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
+        completionHandler([.banner])
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         if let id = response.notification.request.content.userInfo["threadID"] as? String,
