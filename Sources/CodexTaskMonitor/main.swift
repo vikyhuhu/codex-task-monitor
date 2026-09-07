@@ -32,6 +32,9 @@ final class MonitorModel: ObservableObject {
     var running: Int { tasks.filter { $0.status == .running }.count }
     var attention: Int { tasks.filter { ![.running, .ended].contains($0.status) }.count }
     var ended: Int { tasks.filter { $0.status == .ended }.count }
+    var waiting: Int { tasks.filter { $0.status == .needsInput }.count }
+    var failed: Int { tasks.filter { $0.status == .failed }.count }
+    var uncertain: Int { tasks.filter { [.interrupted, .uncertain].contains($0.status) }.count }
     func start() {
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.refresh() }
@@ -214,8 +217,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if CommandLine.arguments.contains("--show") { toggle() }
     }
     private func updateTitle() {
-        item.button?.title = model.error == nil ? "◉ \(model.running)  ! \(model.attention)  ✓ \(model.ended)" : "◉ 状态不可用"
-        item.button?.toolTip = "Codex：共 \(model.tasks.count) 个任务，\(model.running) 运行，\(model.attention) 待处理，\(model.ended) 待查看"
+        guard model.error == nil else {
+            item.button?.title = "⚪ 状态不可用"
+            item.button?.toolTip = "无法读取最新状态，点开查看详情"
+            return
+        }
+        // Emoji retain their colors in the menu bar; monochrome symbols do not.
+        var title = "🔵 \(model.running)  🟠 \(model.waiting)  🔴 \(model.failed)  🟢 \(model.ended)"
+        if model.uncertain > 0 { title += "  ⚪ \(model.uncertain)" }
+        item.button?.title = title
+        item.button?.toolTip = "Codex：共 \(model.tasks.count) 个任务；蓝：运行 \(model.running)，橙：等你处理 \(model.waiting)，红：失败 \(model.failed)，绿：本轮结束待查看 \(model.ended)，灰：中断或状态待确认 \(model.uncertain)"
     }
     @objc func toggle() {
         if popover.isShown { popover.performClose(nil) }
