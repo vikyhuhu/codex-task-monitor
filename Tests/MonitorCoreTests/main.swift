@@ -153,6 +153,62 @@ final class LifecycleTests {
         XCTAssertEqual(tracker.update(ended, dismissed: Set(ended.map { $0.key })).count, 0)
         tracker.silenceNextUpdate(); XCTAssertEqual(tracker.update(ended).count, 0)
     }
+    func testCurrentReadStateRemovesViewedBrowserTask() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(root.appendingPathComponent("state_5.sqlite").path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        XCTAssertEqual(sqlite3_exec(db, "CREATE TABLE threads(id TEXT, name TEXT, title TEXT, cwd TEXT, rollout_path TEXT, archived INTEGER, source TEXT, updated_at INTEGER)", nil, nil, nil), SQLITE_OK)
+        let rollout = root.appendingPathComponent("browser.jsonl")
+        var log = line("task_started", ["turn_id": "one"]); log.append(10)
+        log.append(line("task_complete", ["turn_id": "one"], offset: 1)); log.append(10)
+        try log.write(to: rollout)
+        XCTAssertEqual(sqlite3_exec(db, "INSERT INTO threads VALUES ('browser', 'Browser task', '', '/new-chat', '\(rollout.path)', 0, 'vscode', \(Int(base.timeIntervalSince1970)))", nil, nil, nil), SQLITE_OK)
+        let tasks = try TaskStore(home: root).snapshot(since: base, now: base.addingTimeInterval(30))
+        XCTAssertEqual(tasks.count, 1)
+        guard let task = tasks.first else { return }
+        let stateFile = root.appendingPathComponent(".codex-global-state.json")
+        func receipts(_ json: String, offset: Double = 20) throws -> ReadReceipts? {
+            try Data(json.utf8).write(to: stateFile)
+            try FileManager.default.setAttributes([.modificationDate: base.addingTimeInterval(offset)], ofItemAtPath: stateFile.path)
+            return ReadReceipts.load(home: root)
+        }
+        // The desktop migrates this key out of electron-persisted-atom-state.
+        let unread = #"{"electron-thread-read-state-v1":{"version":1,"unreadByIdentity":{"account":{"local:host":["browser"]}}}}"#
+        let read = #"{"electron-thread-read-state-v1":{"version":1,"unreadByIdentity":{"account":{"local:host":[],"ssh:remote":["browser"]}},"legacyMigration":{"unreadThreadIdsByHostId":{"local":["browser"]}}}}"#
+        let now = base.addingTimeInterval(30)
+        XCTAssertEqual(try receipts(unread)?.isRead(task, now: now), false)
+        let viewed = try receipts(read)
+        XCTAssertEqual(viewed?.isRead(task, now: now), true)
+        XCTAssertEqual(tasks.filter { !(viewed?.isRead($0, now: now) ?? false) }.count, 0)
+        XCTAssertEqual(viewed?.isRead(task, now: base.addingTimeInterval(5)), false)
+        XCTAssertEqual(try receipts(read, offset: 0)?.isRead(task, now: now), false)
+        for status in TaskStatus.allCases where status != .ended {
+            var active = task; active.status = status
+            XCTAssertEqual(viewed?.isRead(active, now: now), false)
+        }
+        var nextTurn = task; nextTurn.turnID = "two"; nextTurn.updatedAt = base.addingTimeInterval(40)
+        XCTAssertEqual(viewed?.isRead(nextTurn, now: base.addingTimeInterval(60)), false)
+        // New data is authoritative even if a stale legacy key is still present.
+        let legacy = #""electron-persisted-atom-state":{"unread-thread-ids-by-host-v1":{"local":[]}}"#
+        let both = String(unread.dropLast()) + "," + legacy + "}"
+        XCTAssertEqual(try receipts(both)?.isRead(task, now: now), false)
+        for invalid in [
+            #"null"#,
+            #"{"version":2,"unreadByIdentity":{"account":{"local:host":[]}}}"#,
+            #"{"version":1,"unreadByIdentity":{}}"#,
+            #"{"version":1,"unreadByIdentity":{"account":{"ssh:remote":[]}}}"#,
+            #"{"version":1,"unreadByIdentity":{"account":{"local:host":null}}}"#,
+            #"{"version":1,"unreadByIdentity":{"account":{"local:host":[42]}}}"#,
+            #"{"version":1,"unreadByIdentity":{"one":{"local:host":[]},"two":{"local:host":["browser"]}}}"#,
+            #"{"version":1,"unreadByIdentity":{"account":{"local:one":[],"local:two":["browser"]}}}"#
+        ] {
+            let json = "{\"electron-thread-read-state-v1\":" + invalid + "," + legacy + "}"
+            XCTAssertEqual(try receipts(json) == nil, true)
+        }
+    }
     func testSoundPriorityAndSilentRunning() {
         XCTAssertEqual(SoundCue.select(for: []), nil)
         XCTAssertEqual(SoundCue.select(for: [.running, .running]), nil)
@@ -188,4 +244,6 @@ do { try suite.testNotificationTransitionsDedupDismissalAndRestart(); print("CHE
 if failures > 0 { exit(1) }
 suite.testSoundPriorityAndSilentRunning(); print("CHECK sound priority, ordering and silent running")
 if failures > 0 { exit(1) }
-print("Passed 13 checks")
+do { try suite.testCurrentReadStateRemovesViewedBrowserTask(); print("CHECK current read state, browser dismissal and conservative fallbacks") } catch { failures += 1; print("FAIL current read state: \(error)") }
+if failures > 0 { exit(1) }
+print("Passed 14 checks")
