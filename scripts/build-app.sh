@@ -1,7 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-swift build -c release
+if [[ -n "${CODEX_MONITOR_BUILD_SYSTEM:-}" ]]; then
+    swift build --build-system "$CODEX_MONITOR_BUILD_SYSTEM" -c release
+else
+    swift build -c release
+fi
 APP="$PWD/dist/Codex Task Monitor.app"
 mkdir -p "$APP/Contents/MacOS"
 cp .build/release/CodexTaskMonitor "$APP/Contents/MacOS/CodexTaskMonitor"

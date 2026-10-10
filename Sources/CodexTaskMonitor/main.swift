@@ -138,6 +138,7 @@ extension TaskStatus {
 
 struct MonitorView: View {
     @ObservedObject var model: MonitorModel
+    @ObservedObject var loginItem: LoginItemController
     var closePanel: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -199,6 +200,16 @@ struct MonitorView: View {
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
+                    Toggle("开机自启动", isOn: Binding(get: { loginItem.isEnabled }, set: loginItem.setEnabled))
+                        .toggleStyle(.switch).controlSize(.mini)
+                        .help("登录 macOS 后自动启动此应用")
+                    Spacer()
+                    Button("系统登录项", action: loginItem.openSettings).buttonStyle(.borderless)
+                }.font(.caption)
+                if !loginItem.message.isEmpty {
+                    Text(loginItem.message).font(.caption2).foregroundStyle(.secondary)
+                }
+                HStack {
                     Toggle("声音提醒", isOn: $model.soundEnabled).toggleStyle(.switch).controlSize(.mini)
                     Spacer()
                     Menu("试听") {
@@ -237,6 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var item: NSStatusItem!
     private var panel: TaskPopover!
     private var model: MonitorModel!
+    private let loginItem = LoginItemController()
     func applicationDidFinishLaunching(_ notification: Notification) {
         if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "local.codex-task-monitor").count > 1 {
             NSApplication.shared.terminate(nil); return
@@ -247,10 +259,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.target = self; item.button?.action = #selector(toggle)
         item.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        panel = TaskPopover(contentViewController: NSHostingController(rootView: MonitorView(model: model, closePanel: { [weak self] in self?.panel.close() })))
+        panel = TaskPopover(contentViewController: NSHostingController(rootView: MonitorView(model: model, loginItem: loginItem, closePanel: { [weak self] in self?.panel.close() })))
         model.onChange = { [weak self] in self?.updateTitle() }
         updateTitle(); model.start()
-        if CommandLine.arguments.contains("--show") { toggle() }
+        if CommandLine.arguments.contains("--show") {
+            // Let AppKit position the status item before using it as the panel anchor.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.toggle() }
+        }
     }
     private func updateTitle() {
         guard model.error == nil else {
@@ -263,8 +278,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         item.button?.toolTip = "Codex：共 \(model.tasks.count) 个任务；蓝：运行 \(model.running)，橙：待处理 \(model.attention)（等待输入、失败、中断或状态待确认），绿：本轮结束待查看 \(model.ended)"
     }
     @objc func toggle() {
+        loginItem.refresh()
         if let button = item.button { panel.toggle(from: button) }
     }
+    func applicationDidBecomeActive(_ notification: Notification) { loginItem.refresh() }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner])
     }
